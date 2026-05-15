@@ -38,6 +38,7 @@ import { REVENUE_PER_PASSENGER, TICK_RATE_MS, UPGRADE_COSTS } from './constants'
 import { ActionType } from './types';
 import { step, getQueueState, mutateQueueState } from './sim/engine';
 import { formatTickTime } from './sim/schedule';
+import { getDayPhaseLabel } from './sim/scheduler';
 import { initialWorld } from './sim/world';
 import { AircraftType, Flight, FlightStatus, QueueState, World } from './sim/types';
 
@@ -147,7 +148,7 @@ export default function App() {
               AeroFlow <span className="hidden sm:inline text-slate-500 font-mono text-[10px] font-normal border-l border-slate-700 pl-2">DEPARTURES SIM</span>
             </h1>
             <div className="text-[9px] font-mono text-slate-500 uppercase tracking-widest mt-0.5">
-              ORD terminal ops
+              CLT terminal ops · Day {world.dayNumber}
             </div>
           </div>
         </div>
@@ -599,6 +600,7 @@ export default function App() {
             <span className="text-brand-accent">CORE READY</span>
           </div>
           <span className="hidden md:inline text-slate-600">SIM TIME: {formatTickTime(world.tick)}</span>
+          <span className="hidden lg:inline text-slate-600">{getDayPhaseLabel(world.tick).toUpperCase()}</span>
           <span className="hidden lg:inline text-slate-600">SIGNALS: {world.signals.length}</span>
         </div>
         <div className="flex items-center gap-4">
