@@ -40,3 +40,7 @@
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   @apply bg-brand/50;
 }
+
+.mobile-tab-bar-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
