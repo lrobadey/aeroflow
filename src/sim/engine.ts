@@ -5,6 +5,7 @@
 
 import { analyze } from './emergence';
 import { downstreamOf } from './graph';
+import { scheduleNewFlights } from './scheduler';
 import { advanceFlights } from './systems/flights';
 import {
   ArrivalState,
@@ -26,7 +27,28 @@ export interface EngineConfig {
   exitRevenue: number;
 }
 
+const MAX_DEPARTED_FLIGHTS = 50;
+
 export function step(world: World, config: EngineConfig): World {
+  // Spawn new flights for any gates that have freed up
+  const { newFlights, newCohorts, gateRotations, dayNumber } = scheduleNewFlights(world);
+  if (newFlights.length > 0) {
+    world = {
+      ...world,
+      flights: [...world.flights, ...newFlights],
+      passengerCohorts: [...world.passengerCohorts, ...newCohorts],
+      gateRotations,
+      dayNumber,
+      systems: world.systems.map(sys => {
+        if (sys.kind !== 'source') return sys;
+        const state = sys.state as ArrivalState;
+        return { ...sys, state: { ...state, cohorts: [...state.cohorts, ...newCohorts] } };
+      }),
+    };
+  } else {
+    world = { ...world, gateRotations, dayNumber };
+  }
+
   const nextTick = world.tick + 1;
   const policy = world.emergence.policy;
 
@@ -158,13 +180,23 @@ export function step(world: World, config: EngineConfig): World {
     },
   ].slice(-HISTORY_WINDOW);
 
+  // Keep active flights + a bounded window of departed flights to limit memory
+  const activeFlights = flightLifecycle.flights.filter(
+    f => f.status !== 'departed' && f.status !== 'cancelled',
+  );
+  const departedFlights = flightLifecycle.flights
+    .filter(f => f.status === 'departed' || f.status === 'cancelled')
+    .slice(-MAX_DEPARTED_FLIGHTS);
+  const trimmedFlights = [...activeFlights, ...departedFlights];
+
   return {
     ...world,
     tick: nextTick,
+    dayNumber,
     funds: nextFunds,
     totalPassengersProcessed: world.totalPassengersProcessed + flightLifecycle.boardedPassengers,
     overallSatisfaction: nextSatisfaction,
-    flights: flightLifecycle.flights,
+    flights: trimmedFlights,
     gates: flightLifecycle.gates,
     passengerCohorts: flightLifecycle.passengerCohorts,
     flightEvents: [...flightLifecycle.events, ...world.flightEvents].slice(0, 40),

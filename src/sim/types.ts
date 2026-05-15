@@ -39,6 +39,11 @@ export interface Gate {
   occupiedByFlightId?: string;
 }
 
+export interface GateRotation {
+  gateId: string;
+  sequenceNumber: number;
+}
+
 export interface Flight {
   id: string;
   flightNumber: string;
@@ -185,12 +190,14 @@ export interface AlertEntry {
 
 export interface World {
   tick: number;
+  dayNumber: number;
   funds: number;
   totalPassengersProcessed: number;
   overallSatisfaction: number;
   aircraftTypes: Record<string, AircraftType>;
   flights: Flight[];
   gates: Gate[];
+  gateRotations: Record<string, GateRotation>;
   passengerCohorts: PassengerCohort[];
   flightEvents: FlightEvent[];
   systems: SystemInstance<any>[];
