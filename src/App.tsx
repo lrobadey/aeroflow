@@ -51,6 +51,7 @@ export default function App() {
   const [world, setWorld] = useState<World>(() => initialWorld());
   const [isPaused, setIsPaused] = useState(false);
   const [activeMobileTab, setActiveMobileTab] = useState<'departures' | 'terminal' | 'manage'>('departures');
+  const [activeDesktopTab, setActiveDesktopTab] = useState<'terminal' | 'manage'>('terminal');
 
   const queueNodes = useMemo<QueueState[]>(
     () => world.systems.filter(s => s.kind === 'queue').map(s => s.state as QueueState),
@@ -120,10 +121,6 @@ export default function App() {
     flight => (flight.actualDepartureTick ?? flight.scheduledDepartureTick) <= flight.scheduledDepartureTick,
   ).length;
   const onTimeRate = departedFlights.length > 0 ? onTimeDepartures / departedFlights.length : 1;
-  const upcomingFlights = activeFlights
-    .slice()
-    .sort((a, b) => a.scheduledDepartureTick - b.scheduledDepartureTick)
-    .slice(0, 6);
   const boardingFlights = activeFlights.filter(
     flight => flight.status === 'boarding' || flight.status === 'delayed',
   );
@@ -208,172 +205,235 @@ export default function App() {
 
       <main className="flex-1 flex flex-col overflow-hidden min-h-0">
 
-        {/* ── Desktop layout (md+) ── unchanged from original */}
-        <div className="hidden md:flex flex-1 flex-col overflow-hidden min-h-0">
-          <aside className="hidden 2xl:flex w-56 bg-surface-900 border-r border-white/5 p-4 flex-col gap-5 overflow-y-auto custom-scrollbar">
-            <section>
-              <SectionHeader title="Infrastructure Health" icon={<Activity className="w-3 h-3" />} />
-              <div className="space-y-4 mt-4">
-                <HealthItem label="System Stability" value={world.overallSatisfaction * 100} color="bg-brand-accent" />
-                <HealthItem label="On-Time Rate" value={onTimeRate * 100} color="bg-brand-accent" />
-                <HealthItem
-                  label="Terminal Space"
-                  value={lounge ? Math.max(0, 100 - (lounge.queue / lounge.capacity) * 100) : 0}
-                  color="bg-brand"
-                />
-                <HealthItem label="Demand Gate" value={inflowThrottle * 100} color="bg-blue-400" />
+        {/* ── Desktop layout (md+) ── Fixed Departures left, tabbed Terminal/Manage right */}
+        <div className="hidden md:flex flex-1 overflow-hidden min-h-0">
+
+          {/* Left: Departures (always visible) */}
+          <section className="w-[44%] lg:w-[40%] xl:w-[36%] flex flex-col overflow-hidden border-r border-white/5 bg-surface-900/40 min-w-0">
+            <div className="flex items-center justify-between px-4 py-3 bg-surface-800 border-b border-white/5 shrink-0">
+              <SectionHeader title="Departures" icon={<Plane className="w-3 h-3" />} />
+              <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                {boardingFlights.length > 0 && (
+                  <span className="bg-brand/15 text-brand border border-brand/30 px-2 py-0.5 rounded-full text-[8px] font-mono uppercase">
+                    {boardingFlights.length} Boarding
+                  </span>
+                )}
+                {delayedFlights.length > 0 && (
+                  <span className="bg-brand-warn/15 text-brand-warn border border-brand-warn/30 px-2 py-0.5 rounded-full text-[8px] font-mono uppercase">
+                    {delayedFlights.length} Delayed
+                  </span>
+                )}
+                {missedPassengers > 0 && (
+                  <span className="bg-red-500/15 text-red-400 border border-red-500/30 px-2 py-0.5 rounded-full text-[8px] font-mono uppercase">
+                    {missedPassengers} Missed
+                  </span>
+                )}
               </div>
-            </section>
-
-            <section className="flex-1 flex flex-col border-t border-white/5 pt-4">
-              <SectionHeader title="Alert Protocol" icon={<Cpu className="w-3 h-3" />} />
-              <div className="mt-4 flex-1 space-y-2 relative overflow-hidden">
-                <div className="absolute inset-x-0 top-0 h-4 bg-gradient-to-b from-surface-900 to-transparent z-10"></div>
-                <div className="space-y-3 pt-2">
-                  <AnimatePresence initial={false}>
-                    {world.alerts.map((alert, i) => (
-                      <motion.div
-                        key={`${alert.tick}-${i}`}
-                        initial={{ x: -20, opacity: 0 }}
-                        animate={{ x: 0, opacity: 1 }}
-                        className={cn(
-                          'text-[10px] font-mono leading-tight border-l-2 pl-2 py-0.5',
-                          alert.type === 'crit'
-                            ? 'text-red-500 border-red-500'
-                            : alert.type === 'warn'
-                              ? 'text-brand-warn border-brand-warn'
-                              : 'text-slate-400 border-slate-600',
-                        )}
-                      >
-                        <span className="opacity-50">[{alert.type.toUpperCase()}]</span> {alert.msg}
-                      </motion.div>
-                    ))}
-                  </AnimatePresence>
-                </div>
-              </div>
-            </section>
-          </aside>
-
-          <div className="flex-1 flex flex-col gap-0 bg-surface-950 relative overflow-hidden min-h-[520px]">
-            <div className="absolute inset-0 technical-grid opacity-10 pointer-events-none"></div>
-
-            <div className="flex-1 relative flex flex-col items-center justify-center p-3 sm:p-5">
-              <div className="w-full grid grid-cols-2 sm:grid-cols-4 items-center px-0 sm:px-8 gap-4 max-w-3xl pb-2">
-                <FlowPoint
-                  name="Check-in"
-                  count={nodeById['checkIn']?.queue ?? 0}
-                  isBottleneck={bottleneckFact?.at === 'checkIn'}
-                  icon={<Database />}
-                  color="brand"
-                />
-                <FlowConnector active={(nodeById['checkIn']?.queue ?? 0) > 0 && !isPaused} />
-                <FlowPoint
-                  name="Security"
-                  count={nodeById['security']?.queue ?? 0}
-                  isBottleneck={bottleneckFact?.at === 'security'}
-                  icon={<ShieldCheck />}
-                  color="blue"
-                />
-                <FlowConnector active={(nodeById['security']?.queue ?? 0) > 0 && !isPaused} />
-                <FlowPoint
-                  name="Lounge"
-                  count={nodeById['lounge']?.queue ?? 0}
-                  isBottleneck={bottleneckFact?.at === 'lounge'}
-                  icon={<Coffee />}
-                  color="amber"
-                />
-                <FlowConnector active={(nodeById['lounge']?.queue ?? 0) > 0 && !isPaused} />
-                <FlowPoint
-                  name="Boarding"
-                  count={nodeById['boarding']?.queue ?? 0}
-                  isBottleneck={bottleneckFact?.at === 'boarding'}
-                  icon={<LogOut />}
-                  color="emerald"
-                />
-              </div>
-
-              <div className="mt-6 text-[9px] font-mono text-slate-600 uppercase tracking-[0.24em] flex items-center gap-2">
-                <RefreshCw className={cn('w-3 h-3', !isPaused && 'animate-spin')} /> Live terminal flow
-              </div>
-
-              <FlightBoard
-                flights={upcomingFlights}
-                activeBoarding={boardingFlights}
-                aircraftTypes={world.aircraftTypes}
-                missedPassengers={missedPassengers}
-              />
             </div>
+            <div className="grid grid-cols-[42px_56px_minmax(0,1fr)_58px] gap-2 px-3 py-1.5 text-[8px] font-mono uppercase tracking-widest text-slate-600 border-b border-white/5 bg-surface-900/40 shrink-0">
+              <span>Time</span>
+              <span>Flight</span>
+              <span>Destination</span>
+              <span>Status</span>
+            </div>
+            <div className="flex-1 overflow-y-auto custom-scrollbar">
+              {allActiveFlightsSorted.length === 0 ? (
+                <div className="flex items-center justify-center h-24 text-[10px] font-mono text-slate-600 uppercase">
+                  No active flights
+                </div>
+              ) : (
+                allActiveFlightsSorted.map(flight => (
+                  <FlightRow
+                    key={flight.id}
+                    flight={flight}
+                    aircraft={world.aircraftTypes[flight.aircraftTypeId]}
+                  />
+                ))
+              )}
+            </div>
+          </section>
 
-            <div className="hidden lg:block h-52 bg-surface-900 border-t border-white/5 p-4 relative">
-              <SectionHeader title="Throughput Analytics" icon={<TrendingUp className="w-3 h-3" />} />
-              <div className="absolute top-6 right-6 flex gap-4">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-brand"></div>
-                  <span className="text-[9px] font-mono uppercase text-slate-500">Check-in</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-brand-accent"></div>
-                  <span className="text-[9px] font-mono uppercase text-slate-500">Satisfaction</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-brand-warn"></div>
-                  <span className="text-[9px] font-mono uppercase text-slate-500">Inflow Throttle</span>
-                </div>
-              </div>
+          {/* Right: Tabbed Terminal / Manage */}
+          <section className="flex-1 flex flex-col overflow-hidden min-h-0 min-w-0">
+            <DesktopTabBar
+              active={activeDesktopTab}
+              onChange={setActiveDesktopTab}
+              hasBottleneck={hasBottleneckOrHint}
+            />
 
-              <div className="flex-1 h-32 mt-4">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={world.history}>
-                    <defs>
-                      <linearGradient id="colorMain" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2} />
-                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
-                    <XAxis dataKey="tick" hide />
-                    <YAxis stroke="#ffffff20" fontSize={9} fontStyle="mono" />
-                    <Tooltip
-                      contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #ffffff10', fontSize: '9px', fontFamily: 'monospace' }}
-                      itemStyle={{ color: '#3b82f6' }}
+            {activeDesktopTab === 'terminal' && (
+              <div className="flex-1 overflow-y-auto custom-scrollbar bg-surface-950 relative">
+                <div className="absolute inset-0 technical-grid opacity-10 pointer-events-none"></div>
+                <div className="p-5 space-y-6 relative">
+                  <section>
+                    <SectionHeader
+                      title="Live Terminal Flow"
+                      icon={<RefreshCw className={cn('w-3 h-3', !isPaused && 'animate-spin')} />}
                     />
-                    <Area type="monotone" dataKey="queues.checkIn" stroke="#3b82f6" strokeWidth={2} fillOpacity={1} fill="url(#colorMain)" />
-                    <Area type="monotone" dataKey={(d) => d.satisfaction * 100} name="Satisfaction" stroke="#10b981" strokeWidth={2} fill="none" />
-                    <Area type="monotone" dataKey={(d) => d.inflowThrottle * 100} name="Inflow" stroke="#f59e0b" strokeWidth={2} fill="none" strokeDasharray="4 2" />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          </div>
+                    <div className="mt-5 grid grid-cols-4 items-center gap-4 max-w-3xl">
+                      <FlowPoint
+                        name="Check-in"
+                        count={nodeById['checkIn']?.queue ?? 0}
+                        isBottleneck={bottleneckFact?.at === 'checkIn'}
+                        icon={<Database />}
+                        color="brand"
+                      />
+                      <FlowPoint
+                        name="Security"
+                        count={nodeById['security']?.queue ?? 0}
+                        isBottleneck={bottleneckFact?.at === 'security'}
+                        icon={<ShieldCheck />}
+                        color="blue"
+                      />
+                      <FlowPoint
+                        name="Lounge"
+                        count={nodeById['lounge']?.queue ?? 0}
+                        isBottleneck={bottleneckFact?.at === 'lounge'}
+                        icon={<Coffee />}
+                        color="amber"
+                      />
+                      <FlowPoint
+                        name="Boarding"
+                        count={nodeById['boarding']?.queue ?? 0}
+                        isBottleneck={bottleneckFact?.at === 'boarding'}
+                        icon={<LogOut />}
+                        color="emerald"
+                      />
+                    </div>
+                  </section>
 
-          <aside className="w-full bg-surface-900 border-t border-white/5 flex flex-col overflow-hidden">
-            <div className="px-3 py-2 border-b border-white/5 bg-surface-800">
-              <SectionHeader title="System Nodes" icon={<Briefcase className="w-3 h-3" />} />
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 p-2 sm:p-3">
-              {queueNodes.map(node => (
-                <NodeCard
-                  key={node.id}
-                  node={node}
-                  funds={world.funds}
-                  onAction={handleAction}
-                  staffingHint={world.emergence.policy.staffingHints[node.id] ?? 0}
-                  isBottleneck={bottleneckFact?.at === node.id}
-                />
-              ))}
-            </div>
-            <div className="px-3 py-2 bg-surface-800 border-t border-white/5">
-              <div className="text-[8px] font-mono text-slate-500 uppercase mb-1.5 text-center">
-                Inflow Gate: {(inflowThrottle * 100).toFixed(0)}%
+                  <section className="border-t border-white/5 pt-5">
+                    <SectionHeader title="Infrastructure Health" icon={<Activity className="w-3 h-3" />} />
+                    <div className="grid grid-cols-2 gap-x-8 gap-y-4 mt-4">
+                      <HealthItem label="System Stability" value={world.overallSatisfaction * 100} color="bg-brand-accent" />
+                      <HealthItem label="On-Time Rate" value={onTimeRate * 100} color="bg-brand-accent" />
+                      <HealthItem
+                        label="Terminal Space"
+                        value={lounge ? Math.max(0, 100 - (lounge.queue / lounge.capacity) * 100) : 0}
+                        color="bg-brand"
+                      />
+                      <HealthItem label="Demand Gate" value={inflowThrottle * 100} color="bg-blue-400" />
+                    </div>
+                  </section>
+
+                  <section className="border-t border-white/5 pt-5">
+                    <SectionHeader title="Alert Protocol" icon={<Cpu className="w-3 h-3" />} />
+                    <div className="mt-3 space-y-2">
+                      {world.alerts.length === 0 ? (
+                        <div className="text-[10px] font-mono text-slate-600 uppercase">No alerts</div>
+                      ) : (
+                        <AnimatePresence initial={false}>
+                          {world.alerts.map((alert, i) => (
+                            <motion.div
+                              key={`${alert.tick}-${i}`}
+                              initial={{ x: -20, opacity: 0 }}
+                              animate={{ x: 0, opacity: 1 }}
+                              className={cn(
+                                'text-[10px] font-mono leading-tight border-l-2 pl-2 py-1',
+                                alert.type === 'crit'
+                                  ? 'text-red-500 border-red-500'
+                                  : alert.type === 'warn'
+                                    ? 'text-brand-warn border-brand-warn'
+                                    : 'text-slate-400 border-slate-600',
+                              )}
+                            >
+                              <span className="opacity-50">[{alert.type.toUpperCase()}]</span> {alert.msg}
+                            </motion.div>
+                          ))}
+                        </AnimatePresence>
+                      )}
+                    </div>
+                  </section>
+
+                  <section className="border-t border-white/5 pt-5">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <SectionHeader title="Throughput Analytics" icon={<TrendingUp className="w-3 h-3" />} />
+                      <div className="flex gap-4">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full bg-brand"></div>
+                          <span className="text-[9px] font-mono uppercase text-slate-500">Check-in</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full bg-brand-accent"></div>
+                          <span className="text-[9px] font-mono uppercase text-slate-500">Satisfaction</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full bg-brand-warn"></div>
+                          <span className="text-[9px] font-mono uppercase text-slate-500">Inflow</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="h-40 mt-4">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={world.history}>
+                          <defs>
+                            <linearGradient id="colorMainDesktop" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2} />
+                              <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                          <XAxis dataKey="tick" hide />
+                          <YAxis stroke="#ffffff20" fontSize={9} />
+                          <Tooltip
+                            contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #ffffff10', fontSize: '9px', fontFamily: 'monospace' }}
+                            itemStyle={{ color: '#3b82f6' }}
+                          />
+                          <Area type="monotone" dataKey="queues.checkIn" stroke="#3b82f6" strokeWidth={2} fillOpacity={1} fill="url(#colorMainDesktop)" />
+                          <Area type="monotone" dataKey={(d) => d.satisfaction * 100} name="Satisfaction" stroke="#10b981" strokeWidth={2} fill="none" />
+                          <Area type="monotone" dataKey={(d) => d.inflowThrottle * 100} name="Inflow" stroke="#f59e0b" strokeWidth={2} fill="none" strokeDasharray="4 2" />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </section>
+                </div>
               </div>
-              <button
-                disabled={world.funds < 10000}
-                className="w-full py-1.5 bg-brand hover:bg-blue-500 disabled:opacity-20 rounded text-[8px] font-bold text-white transition-all uppercase tracking-widest shadow-lg shadow-brand/20 active:scale-[0.98]"
-              >
-                Auto-balance
-              </button>
-            </div>
-          </aside>
+            )}
+
+            {activeDesktopTab === 'manage' && (
+              <div className="flex-1 overflow-y-auto custom-scrollbar">
+                <div className="px-5 py-4 bg-surface-800 border-b border-white/5">
+                  <div className="flex items-center justify-between gap-4 flex-wrap">
+                    <div>
+                      <div className="text-[8px] font-mono uppercase text-slate-500 tracking-widest mb-1">Available Balance</div>
+                      <div className="text-2xl font-bold font-mono text-brand-accent tabular-nums">
+                        ${world.funds.toLocaleString()}
+                      </div>
+                    </div>
+                    <div className="text-right text-[8px] font-mono text-slate-600 uppercase space-y-1">
+                      <div>Staff hire: <span className="text-slate-400">$1,000</span></div>
+                      <div>Capacity +10: <span className="text-slate-400">$5,000</span></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 p-4">
+                  {queueNodes.map(node => (
+                    <NodeCard
+                      key={node.id}
+                      node={node}
+                      funds={world.funds}
+                      onAction={handleAction}
+                      staffingHint={world.emergence.policy.staffingHints[node.id] ?? 0}
+                      isBottleneck={bottleneckFact?.at === node.id}
+                    />
+                  ))}
+                </div>
+
+                <div className="px-4 pb-6 pt-2">
+                  <div className="text-[8px] font-mono text-slate-500 uppercase mb-2 text-center">
+                    Inflow Gate: {(inflowThrottle * 100).toFixed(0)}%
+                  </div>
+                  <button
+                    disabled={world.funds < 10000}
+                    className="w-full py-2 bg-brand hover:bg-blue-500 disabled:opacity-20 rounded text-[10px] font-bold text-white transition-all uppercase tracking-widest shadow-lg shadow-brand/20 active:scale-[0.98]"
+                  >
+                    Auto-balance
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
         </div>
 
         {/* ── Mobile layout (<md) ── 3-tab bottom navigation */}
@@ -682,40 +742,6 @@ function HealthItem({ label, value, color }: { label: string; value: number; col
   );
 }
 
-interface FlightBoardProps {
-  flights: Flight[];
-  activeBoarding: Flight[];
-  aircraftTypes: Record<string, AircraftType>;
-  missedPassengers: number;
-}
-
-function FlightBoard({ flights, activeBoarding, aircraftTypes, missedPassengers }: FlightBoardProps) {
-  return (
-    <section className="w-full max-w-3xl mt-5 bg-surface-900/90 border border-white/5 shadow-2xl shadow-black/20">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-white/5 bg-surface-800/60">
-        <SectionHeader title="Departures" icon={<Plane className="w-3 h-3" />} />
-        <div className="flex items-center gap-3 text-[8px] font-mono uppercase text-slate-500">
-          <span>{activeBoarding.length} boarding</span>
-          <span>{missedPassengers} missed</span>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-[42px_56px_minmax(0,1fr)_58px] gap-2 px-3 py-1.5 text-[7px] font-mono uppercase tracking-widest text-slate-600 border-b border-white/5">
-        <span>Time</span>
-        <span>Flight</span>
-        <span>Destination</span>
-        <span>Status</span>
-      </div>
-
-      <div className="max-h-36 sm:max-h-44 overflow-y-auto custom-scrollbar">
-        {flights.map(flight => (
-          <FlightRow key={flight.id} flight={flight} aircraft={aircraftTypes[flight.aircraftTypeId]} />
-        ))}
-      </div>
-    </section>
-  );
-}
-
 function FlightRow({ flight, aircraft }: { key?: string; flight: Flight; aircraft?: AircraftType }) {
   const boardedPercent = Math.min(100, (flight.boardedPassengers / Math.max(1, flight.bookedPassengers)) * 100);
   const riskPercent = Math.round(flight.delayRisk * 100);
@@ -877,18 +903,46 @@ function FlowPoint({
   );
 }
 
-function FlowConnector({ active }: { active: boolean }) {
+interface DesktopTabBarProps {
+  active: 'terminal' | 'manage';
+  onChange: (tab: 'terminal' | 'manage') => void;
+  hasBottleneck: boolean;
+}
+
+function DesktopTabBar({ active, onChange, hasBottleneck }: DesktopTabBarProps) {
+  const tabs = [
+    { id: 'terminal' as const, label: 'Terminal', icon: <RefreshCw className="w-3.5 h-3.5" />, badge: null as string | null },
+    { id: 'manage' as const, label: 'Manage', icon: <Briefcase className="w-3.5 h-3.5" />, badge: hasBottleneck ? 'red' : null },
+  ];
+
   return (
-    <div className="hidden h-[1px] min-w-8 flex-1 bg-white/5 relative">
-      {active && (
-        <motion.div
-          initial={{ x: '-100%', opacity: 0 }}
-          animate={{ x: '100%', opacity: [0, 1, 1, 0] }}
-          transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
-          className="absolute top-1/2 -translate-y-1/2 w-8 h-[2px] bg-brand blur-[1px]"
-        />
-      )}
-    </div>
+    <nav className="shrink-0 flex bg-surface-800 border-b border-white/5">
+      {tabs.map(tab => (
+        <button
+          key={tab.id}
+          onClick={() => onChange(tab.id)}
+          className={cn(
+            'flex items-center gap-2 px-5 py-2.5 relative transition-colors text-[10px] font-bold uppercase tracking-widest',
+            active === tab.id ? 'text-brand' : 'text-slate-500 hover:text-slate-300',
+          )}
+          aria-pressed={active === tab.id}
+        >
+          {active === tab.id && <div className="absolute bottom-0 inset-x-0 h-0.5 bg-brand" />}
+          <div className="relative">
+            {tab.icon}
+            {tab.badge && (
+              <span
+                className={cn(
+                  'absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full',
+                  tab.badge === 'red' ? 'bg-red-500' : 'bg-brand-warn',
+                )}
+              />
+            )}
+          </div>
+          <span>{tab.label}</span>
+        </button>
+      ))}
+    </nav>
   );
 }
 
