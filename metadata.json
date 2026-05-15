@@ -1,0 +1,6 @@
+{
+  "name": "AeroFlow: Systems Sim",
+  "description": "A systems-thinking oriented airport logistics simulation. Manage complex feedback loops, bottlenecks, and passenger flow.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
