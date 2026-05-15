@@ -5,8 +5,11 @@
 
 import { analyze } from './emergence';
 import { downstreamOf } from './graph';
+import { advanceFlights } from './systems/flights';
 import {
+  ArrivalState,
   AlertEntry,
+  PassengerBatch,
   QueueState,
   Signal,
   StepResult,
@@ -32,23 +35,27 @@ export function step(world: World, config: EngineConfig): World {
     outputs[sys.id] = sys.step({
       state: sys.state,
       inbox: 0,
+      inboundBatches: [],
       tick: nextTick,
       policy,
     });
   }
 
   const inboxes: Record<SystemId, number> = {};
-  let exitCount = 0;
+  const batchInboxes: Record<SystemId, PassengerBatch[]> = {};
+  const boardedBatches: PassengerBatch[] = [];
   for (const sys of world.systems) {
     const out = outputs[sys.id].outbox;
+    const outboxBatches = outputs[sys.id].outboxBatches;
     if (out <= 0) continue;
     const targets = downstreamOf(world.flows, sys.id);
     if (targets.length === 0) {
-      exitCount += out;
+      boardedBatches.push(...outboxBatches);
     } else {
       const share = out / targets.length;
       for (const t of targets) {
         inboxes[t] = (inboxes[t] ?? 0) + share;
+        batchInboxes[t] = [...(batchInboxes[t] ?? []), ...splitBatches(outboxBatches, targets.length)];
       }
     }
   }
@@ -60,23 +67,59 @@ export function step(world: World, config: EngineConfig): World {
     const incoming = inboxes[sys.id] ?? 0;
     if (incoming > 0 && sys.kind === 'queue') {
       const q = nextState as QueueState;
-      nextState = { ...q, queue: q.queue + incoming };
+      const incomingBatches = batchInboxes[sys.id] ?? [];
+      nextState = {
+        ...q,
+        queue: q.queue + incoming,
+        batches: [...q.batches, ...incomingBatches],
+      };
     }
     totalStaffCost += result.staffCost ?? 0;
     return { ...sys, state: nextState };
   });
 
-  const revenue = exitCount * config.exitRevenue;
+  const lifecycleQueueStates: Record<SystemId, QueueState> = {};
+  for (const sys of nextSystems) {
+    if (sys.kind === 'queue') lifecycleQueueStates[sys.id] = sys.state as QueueState;
+  }
+
+  const sourceState = nextSystems.find(sys => sys.kind === 'source')?.state as ArrivalState | undefined;
+  const sourceCohorts = sourceState?.cohorts ?? world.passengerCohorts;
+  const flightLifecycle = advanceFlights({
+    tick: nextTick,
+    aircraftTypes: world.aircraftTypes,
+    flights: world.flights,
+    gates: world.gates,
+    passengerCohorts: sourceCohorts,
+    queueStates: lifecycleQueueStates,
+    boardedBatches,
+  });
+
+  const closedFlightIds = new Set(
+    flightLifecycle.flights
+      .filter(flight => flight.status === 'departed' || flight.status === 'cancelled')
+      .map(flight => flight.id),
+  );
+  const synchronizedSystems = nextSystems.map(sys => {
+    if (sys.kind === 'queue') {
+      return { ...sys, state: removeBatchesForFlights(sys.state as QueueState, closedFlightIds) };
+    }
+    if (sys.kind !== 'source') return sys;
+    return { ...sys, state: { ...(sys.state as ArrivalState), cohorts: flightLifecycle.passengerCohorts } };
+  });
+
+  const queueStates: Record<SystemId, QueueState> = {};
+  for (const sys of synchronizedSystems) {
+    if (sys.kind === 'queue') queueStates[sys.id] = sys.state as QueueState;
+  }
+
+  const revenue = flightLifecycle.boardedPassengers * config.exitRevenue;
   const nextFunds = world.funds + revenue - totalStaffCost;
 
   const newSignals: Signal[] = [];
   for (const id of Object.keys(outputs)) newSignals.push(...outputs[id].signals);
+  newSignals.push(...flightLifecycle.signals);
   const allSignals = [...world.signals, ...newSignals].slice(-SIGNAL_WINDOW * world.systems.length);
-
-  const queueStates: Record<SystemId, QueueState> = {};
-  for (const sys of nextSystems) {
-    if (sys.kind === 'queue') queueStates[sys.id] = sys.state as QueueState;
-  }
 
   const analysis = analyze({
     tick: nextTick,
@@ -84,7 +127,7 @@ export function step(world: World, config: EngineConfig): World {
     queueStates,
     recentSignals: allSignals,
     prevSatisfaction: world.overallSatisfaction,
-    systems: nextSystems,
+    systems: synchronizedSystems,
   });
 
   const nextSatisfaction = clamp(world.overallSatisfaction + analysis.satisfactionDelta, 0, 1);
@@ -92,7 +135,12 @@ export function step(world: World, config: EngineConfig): World {
   const newAlerts: AlertEntry[] = analysis.facts
     .filter(f => f.kind !== 'nominal' || nextTick % 20 === 0)
     .map(f => ({ msg: f.message, type: f.level, tick: nextTick }));
-  const nextAlerts = [...newAlerts, ...world.alerts].slice(0, ALERT_WINDOW);
+  const flightAlerts: AlertEntry[] = flightLifecycle.events.map(event => ({
+    msg: event.message.toUpperCase(),
+    type: event.level,
+    tick: event.tick,
+  }));
+  const nextAlerts = [...flightAlerts, ...newAlerts, ...world.alerts].slice(0, ALERT_WINDOW);
 
   const queuesSnapshot: Record<string, number> = {};
   for (const id of Object.keys(queueStates)) queuesSnapshot[id] = queueStates[id].queue;
@@ -105,6 +153,8 @@ export function step(world: World, config: EngineConfig): World {
       satisfaction: nextSatisfaction,
       queues: queuesSnapshot,
       inflowThrottle: analysis.policy.inflowThrottle,
+      delayedFlights: flightLifecycle.flights.filter(flight => flight.status === 'delayed').length,
+      boardedPassengers: world.totalPassengersProcessed + flightLifecycle.boardedPassengers,
     },
   ].slice(-HISTORY_WINDOW);
 
@@ -112,9 +162,13 @@ export function step(world: World, config: EngineConfig): World {
     ...world,
     tick: nextTick,
     funds: nextFunds,
-    totalPassengersProcessed: world.totalPassengersProcessed + exitCount,
+    totalPassengersProcessed: world.totalPassengersProcessed + flightLifecycle.boardedPassengers,
     overallSatisfaction: nextSatisfaction,
-    systems: nextSystems,
+    flights: flightLifecycle.flights,
+    gates: flightLifecycle.gates,
+    passengerCohorts: flightLifecycle.passengerCohorts,
+    flightEvents: [...flightLifecycle.events, ...world.flightEvents].slice(0, 40),
+    systems: synchronizedSystems,
     signals: allSignals,
     emergence: { facts: analysis.facts, policy: analysis.policy },
     history: nextHistory,
@@ -144,4 +198,19 @@ export function mutateQueueState(
 
 function clamp(x: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, x));
+}
+
+function splitBatches(batches: PassengerBatch[], targetCount: number): PassengerBatch[] {
+  if (targetCount <= 1) return batches;
+  return batches.map(batch => ({ ...batch, count: batch.count / targetCount }));
+}
+
+function removeBatchesForFlights(state: QueueState, flightIds: Set<string>): QueueState {
+  if (flightIds.size === 0) return state;
+  const batches = state.batches.filter(batch => !flightIds.has(batch.flightId));
+  return { ...state, queue: totalBatchCount(batches), batches };
+}
+
+function totalBatchCount(batches: PassengerBatch[]): number {
+  return batches.reduce((sum, batch) => sum + batch.count, 0);
 }

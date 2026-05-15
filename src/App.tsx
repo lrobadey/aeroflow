@@ -37,8 +37,9 @@ import { twMerge } from 'tailwind-merge';
 import { REVENUE_PER_PASSENGER, TICK_RATE_MS, UPGRADE_COSTS } from './constants';
 import { ActionType } from './types';
 import { step, getQueueState, mutateQueueState } from './sim/engine';
+import { formatTickTime } from './sim/schedule';
 import { initialWorld } from './sim/world';
-import { QueueState, World } from './sim/types';
+import { AircraftType, Flight, FlightStatus, QueueState, World } from './sim/types';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -99,8 +100,10 @@ export default function App() {
               ...prev.alerts,
             ].slice(0, 5),
           };
-        default:
-          return prev;
+        default: {
+          const exhaustive: never = action;
+          return exhaustive;
+        }
       }
     });
   };
@@ -108,67 +111,83 @@ export default function App() {
   const lounge = nodeById['lounge'];
   const inflowThrottle = world.emergence.policy.inflowThrottle;
   const bottleneckFact = world.emergence.facts.find(f => f.kind === 'bottleneck');
+  const activeFlights = world.flights.filter(flight => flight.status !== 'departed' && flight.status !== 'cancelled');
+  const departedFlights = world.flights.filter(flight => flight.status === 'departed');
+  const delayedFlights = world.flights.filter(flight => flight.status === 'delayed');
+  const missedPassengers = world.flights.reduce((sum, flight) => sum + flight.missedPassengers, 0);
+  const onTimeDepartures = departedFlights.filter(
+    flight => (flight.actualDepartureTick ?? flight.scheduledDepartureTick) <= flight.scheduledDepartureTick,
+  ).length;
+  const onTimeRate = departedFlights.length > 0 ? onTimeDepartures / departedFlights.length : 1;
+  const upcomingFlights = activeFlights
+    .slice()
+    .sort((a, b) => a.scheduledDepartureTick - b.scheduledDepartureTick)
+    .slice(0, 6);
+  const boardingFlights = activeFlights.filter(
+    flight => flight.status === 'boarding' || flight.status === 'delayed',
+  );
 
   return (
-    <div className="flex flex-col h-screen bg-surface-950 text-slate-200 overflow-hidden font-sans border-4 border-surface-800">
-      <header className="flex items-center justify-between px-6 py-4 bg-surface-800 border-b border-white/5 z-20">
+    <div className="w-full max-w-full flex flex-col min-h-screen xl:h-screen bg-surface-950 text-slate-200 overflow-x-hidden overflow-y-auto xl:overflow-y-hidden font-sans border-2 border-surface-800">
+      <header className="flex flex-col justify-between gap-3 px-3 sm:px-5 py-3 bg-surface-800 border-b border-white/5 z-20 overflow-hidden">
         <div className="flex items-center gap-4">
-          <div className="w-10 h-10 bg-brand rounded flex items-center justify-center font-bold text-white shadow-lg shadow-brand/20">
-            <Plane className="w-6 h-6" />
+          <div className="w-8 h-8 bg-brand rounded flex items-center justify-center font-bold text-white shadow-lg shadow-brand/20">
+            <Plane className="w-5 h-5" />
           </div>
           <div>
-            <h1 className="text-lg font-bold tracking-tight uppercase flex items-center gap-2">
-              AeroFlow <span className="text-slate-500 font-mono text-xs font-normal border-l border-slate-700 pl-2">V-RC4 // LOGISTICS SIM</span>
+            <h1 className="text-base font-bold tracking-tight uppercase flex items-center gap-2">
+              AeroFlow <span className="hidden sm:inline text-slate-500 font-mono text-[10px] font-normal border-l border-slate-700 pl-2">DEPARTURES SIM</span>
             </h1>
             <div className="text-[9px] font-mono text-slate-500 uppercase tracking-widest mt-0.5">
-              Terminal Node: ORD-MAIN-SIM-01
+              ORD terminal ops
             </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-8">
+        <div className="grid grid-cols-4 items-center gap-3 w-full">
           <StatBox label="Balance" value={`$${world.funds.toLocaleString()}`} color="text-brand-accent" />
-          <StatBox label="Satisfaction" value={`${(world.overallSatisfaction * 100).toFixed(1)}%`} color={world.overallSatisfaction < 0.4 ? 'text-red-500' : 'text-brand-accent'} />
-          <StatBox label="Processed" value={world.totalPassengersProcessed.toLocaleString()} color="text-brand" />
-          <StatBox label="Inflow" value={`${(inflowThrottle * 100).toFixed(0)}%`} color={inflowThrottle < 0.7 ? 'text-brand-warn' : 'text-slate-300'} />
+          <StatBox label="Sat" value={`${(world.overallSatisfaction * 100).toFixed(0)}%`} color={world.overallSatisfaction < 0.4 ? 'text-red-500' : 'text-brand-accent'} />
+          <StatBox label="Boarded" value={world.totalPassengersProcessed.toLocaleString()} color="text-brand" />
+          <StatBox label="Delayed" value={delayedFlights.length.toString()} color={delayedFlights.length > 0 ? 'text-brand-warn' : 'text-slate-300'} />
 
-          <div className="h-8 w-[1px] bg-white/10 hidden md:block"></div>
+          <div className="hidden"></div>
 
-          <div className="flex gap-2">
+          <div className="col-span-4 flex gap-2 justify-end">
             <button
               onClick={() => setIsPaused(true)}
               className={cn(
-                'px-4 py-2 rounded text-[10px] font-bold transition-all uppercase flex items-center gap-2',
+                'px-3 py-2 rounded text-[10px] font-bold transition-all uppercase flex items-center gap-2',
                 isPaused ? 'bg-brand text-white' : 'bg-surface-700 hover:bg-surface-600 text-slate-300',
               )}
             >
-              <PauseIcon className="w-3 h-3" /> Standby
+              <PauseIcon className="w-3 h-3" /> Pause
             </button>
             <button
               onClick={() => setIsPaused(false)}
               className={cn(
-                'px-4 py-2 rounded text-[10px] font-bold transition-all uppercase flex items-center gap-2',
+                'px-3 py-2 rounded text-[10px] font-bold transition-all uppercase flex items-center gap-2',
                 !isPaused ? 'bg-brand text-white' : 'bg-surface-700 hover:bg-surface-600 text-slate-300',
               )}
             >
-              <Play className="w-3 h-3" /> Execute
+              <Play className="w-3 h-3" /> Run
             </button>
           </div>
         </div>
       </header>
 
-      <main className="flex-1 flex overflow-hidden">
-        <aside className="w-64 bg-surface-900 border-r border-white/5 p-4 flex flex-col gap-6 overflow-y-auto custom-scrollbar">
+      <main className="flex-1 flex flex-col overflow-visible">
+        <aside className="hidden 2xl:flex w-56 bg-surface-900 border-r border-white/5 p-4 flex-col gap-5 overflow-y-auto custom-scrollbar">
           <section>
             <SectionHeader title="Infrastructure Health" icon={<Activity className="w-3 h-3" />} />
             <div className="space-y-4 mt-4">
               <HealthItem label="System Stability" value={world.overallSatisfaction * 100} color="bg-brand-accent" />
+              <HealthItem label="On-Time Rate" value={onTimeRate * 100} color="bg-brand-accent" />
               <HealthItem
                 label="Terminal Space"
                 value={lounge ? Math.max(0, 100 - (lounge.queue / lounge.capacity) * 100) : 0}
                 color="bg-brand"
               />
-              <HealthItem label="Inflow Gate" value={inflowThrottle * 100} color="bg-blue-400" />
+              <HealthItem label="Demand Gate" value={inflowThrottle * 100} color="bg-blue-400" />
             </div>
           </section>
 
@@ -201,11 +220,11 @@ export default function App() {
           </section>
         </aside>
 
-        <div className="flex-1 flex flex-col gap-0 bg-surface-950 relative overflow-hidden">
+        <div className="flex-1 flex flex-col gap-0 bg-surface-950 relative overflow-hidden min-h-[520px]">
           <div className="absolute inset-0 technical-grid opacity-10 pointer-events-none"></div>
 
-          <div className="flex-1 relative flex flex-col items-center justify-center p-8">
-            <div className="w-full flex justify-between items-center px-12 gap-8 max-w-4xl">
+          <div className="flex-1 relative flex flex-col items-center justify-center p-3 sm:p-5">
+            <div className="w-full grid grid-cols-2 sm:grid-cols-4 items-center px-0 sm:px-8 gap-4 max-w-3xl pb-2">
               <FlowPoint
                 name="Check-in"
                 count={nodeById['checkIn']?.queue ?? 0}
@@ -239,12 +258,19 @@ export default function App() {
               />
             </div>
 
-            <div className="mt-12 text-[10px] font-mono text-slate-500 uppercase tracking-[0.3em] flex items-center gap-2">
-              <RefreshCw className={cn('w-3 h-3', !isPaused && 'animate-spin')} /> Real-time stream sync active
+            <div className="mt-6 text-[9px] font-mono text-slate-600 uppercase tracking-[0.24em] flex items-center gap-2">
+              <RefreshCw className={cn('w-3 h-3', !isPaused && 'animate-spin')} /> Live terminal flow
             </div>
+
+            <FlightBoard
+              flights={upcomingFlights}
+              activeBoarding={boardingFlights}
+              aircraftTypes={world.aircraftTypes}
+              missedPassengers={missedPassengers}
+            />
           </div>
 
-          <div className="h-64 bg-surface-900 border-t border-white/5 p-6 relative">
+          <div className="hidden lg:block h-52 bg-surface-900 border-t border-white/5 p-4 relative">
             <SectionHeader title="Throughput Analytics" icon={<TrendingUp className="w-3 h-3" />} />
             <div className="absolute top-6 right-6 flex gap-4">
               <div className="flex items-center gap-2">
@@ -286,11 +312,11 @@ export default function App() {
           </div>
         </div>
 
-        <aside className="w-80 bg-surface-900 border-l border-white/5 flex flex-col overflow-hidden">
-          <div className="p-4 border-b border-white/5 bg-surface-800">
+        <aside className="w-full bg-surface-900 border-t border-white/5 flex flex-col overflow-hidden">
+          <div className="px-3 py-2 border-b border-white/5 bg-surface-800">
             <SectionHeader title="System Nodes" icon={<Briefcase className="w-3 h-3" />} />
           </div>
-          <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 p-2 sm:p-3">
             {queueNodes.map(node => (
               <NodeCard
                 key={node.id}
@@ -302,15 +328,15 @@ export default function App() {
               />
             ))}
           </div>
-          <div className="p-4 bg-surface-800 border-t border-white/5">
-            <div className="text-[9px] font-mono text-slate-500 uppercase mb-2 text-center">
+          <div className="px-3 py-2 bg-surface-800 border-t border-white/5">
+            <div className="text-[8px] font-mono text-slate-500 uppercase mb-1.5 text-center">
               Inflow Gate: {(inflowThrottle * 100).toFixed(0)}%
             </div>
             <button
               disabled={world.funds < 10000}
-              className="w-full py-3 bg-brand hover:bg-blue-500 disabled:opacity-20 rounded text-[10px] font-bold text-white transition-all uppercase tracking-widest shadow-lg shadow-brand/20 active:scale-[0.98]"
+              className="w-full py-1.5 bg-brand hover:bg-blue-500 disabled:opacity-20 rounded text-[8px] font-bold text-white transition-all uppercase tracking-widest shadow-lg shadow-brand/20 active:scale-[0.98]"
             >
-              Optimize Total Matrix
+              Auto-balance
             </button>
           </div>
         </aside>
@@ -322,11 +348,12 @@ export default function App() {
             <div className="w-2 h-2 rounded-full bg-brand-accent animate-pulse"></div>
             <span className="text-brand-accent">CORE READY</span>
           </div>
-          <span className="hidden md:inline text-slate-600">ID: ORD-TX-092-2291</span>
+          <span className="hidden md:inline text-slate-600">SIM TIME: {formatTickTime(world.tick)}</span>
           <span className="hidden lg:inline text-slate-600">SIGNALS: {world.signals.length}</span>
         </div>
         <div className="flex items-center gap-4">
           <span>TICK: {world.tick}</span>
+          <span className="text-slate-500 uppercase">ACTIVE FLIGHTS: {activeFlights.length}</span>
           <span className="text-slate-500 uppercase">FACTS: {world.emergence.facts.length}</span>
         </div>
       </footer>
@@ -373,9 +400,9 @@ export default function App() {
 
 function StatBox({ label, value, color }: { label: string; value: string; color: string }) {
   return (
-    <div className="flex flex-col items-end">
-      <span className="text-[9px] font-bold uppercase tracking-widest text-slate-500">{label}</span>
-      <span className={cn('font-mono text-lg font-bold tabular-nums leading-none mt-1', color)}>{value}</span>
+    <div className="flex flex-col items-start md:items-end min-w-12">
+      <span className="text-[8px] font-bold uppercase tracking-widest text-slate-500">{label}</span>
+      <span className={cn('font-mono text-sm sm:text-base font-bold tabular-nums leading-none mt-1', color)}>{value}</span>
     </div>
   );
 }
@@ -392,15 +419,101 @@ function SectionHeader({ title, icon }: { title: string; icon: ReactNode }) {
 function HealthItem({ label, value, color }: { label: string; value: number; color: string }) {
   return (
     <div>
-      <div className="flex justify-between mb-1.5">
+      <div className="flex justify-between mb-1">
         <span className="text-[10px] font-medium text-slate-400 uppercase tracking-tight">{label}</span>
         <span className={cn('text-[10px] font-mono', value < 30 ? 'text-red-500' : 'text-emerald-400')}>{value.toFixed(0)}%</span>
       </div>
-      <div className="w-full h-1 bg-surface-700 rounded-full overflow-hidden">
+      <div className="w-full h-0.5 bg-surface-700 rounded-full overflow-hidden">
         <motion.div className={cn('h-full', color)} initial={{ width: 0 }} animate={{ width: `${value}%` }} />
       </div>
     </div>
   );
+}
+
+interface FlightBoardProps {
+  flights: Flight[];
+  activeBoarding: Flight[];
+  aircraftTypes: Record<string, AircraftType>;
+  missedPassengers: number;
+}
+
+function FlightBoard({ flights, activeBoarding, aircraftTypes, missedPassengers }: FlightBoardProps) {
+  return (
+    <section className="w-full max-w-3xl mt-5 bg-surface-900/90 border border-white/5 shadow-2xl shadow-black/20">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-white/5 bg-surface-800/60">
+        <SectionHeader title="Departures" icon={<Plane className="w-3 h-3" />} />
+        <div className="flex items-center gap-3 text-[8px] font-mono uppercase text-slate-500">
+          <span>{activeBoarding.length} boarding</span>
+          <span>{missedPassengers} missed</span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-[42px_56px_minmax(0,1fr)_58px] gap-2 px-3 py-1.5 text-[7px] font-mono uppercase tracking-widest text-slate-600 border-b border-white/5">
+        <span>Time</span>
+        <span>Flight</span>
+        <span>Destination</span>
+        <span>Status</span>
+      </div>
+
+      <div className="max-h-36 sm:max-h-44 overflow-y-auto custom-scrollbar">
+        {flights.map(flight => (
+          <FlightRow key={flight.id} flight={flight} aircraft={aircraftTypes[flight.aircraftTypeId]} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function FlightRow({ flight, aircraft }: { key?: string; flight: Flight; aircraft?: AircraftType }) {
+  const boardedPercent = Math.min(100, (flight.boardedPassengers / Math.max(1, flight.bookedPassengers)) * 100);
+  const riskPercent = Math.round(flight.delayRisk * 100);
+  const status = statusLabel(flight.status);
+
+  return (
+    <div className="grid grid-cols-[42px_56px_minmax(0,1fr)_58px] gap-2 items-center px-3 py-1.5 border-b border-white/5 bg-surface-900/40 hover:bg-surface-800/50 transition-colors">
+      <span className="font-mono text-[10px] text-white tabular-nums">{formatTickTime(flight.scheduledDepartureTick)}</span>
+      <span className="font-mono text-[10px] font-bold text-brand tabular-nums">{flight.flightNumber}</span>
+      <div className="min-w-0">
+        <div className="text-[10px] font-semibold text-slate-200 truncate uppercase">{flight.destination}</div>
+        <div className="text-[8px] font-mono text-slate-600 truncate uppercase">
+          Gate {flight.gateId} / {flight.boardedPassengers.toFixed(0)}/{flight.bookedPassengers} / risk {riskPercent}%
+        </div>
+      </div>
+      <span className={cn('px-1.5 py-0.5 text-[7px] font-bold uppercase rounded-sm border text-center truncate', status.color)}>
+        {status.label}
+      </span>
+      <div className="col-span-4 h-0.5 bg-surface-950 overflow-hidden">
+        <div
+          className={cn(
+            'h-full',
+            flight.status === 'delayed' ? 'bg-brand-warn' : flight.delayRisk > 0.6 ? 'bg-red-500' : 'bg-brand',
+          )}
+          style={{ width: `${boardedPercent}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function statusLabel(status: FlightStatus): { label: string; color: string } {
+  switch (status) {
+    case 'scheduled':
+      return { label: 'Scheduled', color: 'bg-slate-500/10 text-slate-400 border-slate-500/30' };
+    case 'checkInOpen':
+      return { label: 'Check-in', color: 'bg-blue-500/10 text-blue-400 border-blue-500/30' };
+    case 'boarding':
+      return { label: 'Boarding', color: 'bg-brand/10 text-brand border-brand/40' };
+    case 'delayed':
+      return { label: 'Delayed', color: 'bg-brand-warn/10 text-brand-warn border-brand-warn/40' };
+    case 'departed':
+      return { label: 'Departed', color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' };
+    case 'cancelled':
+      return { label: 'Cancelled', color: 'bg-red-500/10 text-red-400 border-red-500/30' };
+    default: {
+      const exhaustive: never = status;
+      return exhaustive;
+    }
+  }
 }
 
 interface NodeCardProps {
@@ -418,66 +531,58 @@ function NodeCard({ node, funds, onAction, staffingHint, isBottleneck }: NodeCar
   return (
     <div
       className={cn(
-        'bg-surface-800 p-4 border border-white/5 border-l-4 transition-all group',
+        'bg-surface-800 px-2.5 py-2 border border-white/5 border-l-2 transition-all group',
         isBottleneck ? 'border-l-red-500' : isOverCapacity ? 'border-l-brand-warn' : 'border-l-brand',
       )}
     >
-      <div className="flex justify-between items-start mb-3">
-        <div>
-          <div className="text-[8px] font-bold text-slate-500 uppercase tracking-widest mb-0.5">Subsystem</div>
-          <h3 className="font-bold text-sm text-white uppercase tracking-tight">{node.name}</h3>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h3 className="font-bold text-[11px] leading-tight text-white uppercase tracking-tight truncate">{node.name}</h3>
+          <div className="mt-1 flex items-center gap-2 text-[8px] font-mono uppercase text-slate-500">
+            <span>Staff {node.staff}</span>
+            <span>Cap {node.capacity}</span>
+          </div>
         </div>
         <div
           className={cn(
-            'px-2 py-0.5 rounded text-[10px] font-mono font-bold border',
+            'px-1.5 py-0.5 rounded text-[9px] font-mono font-bold border',
             isOverCapacity ? 'bg-red-500/10 text-red-500 border-red-500/50' : 'bg-brand/10 text-brand border-brand/50',
           )}
         >
-          {Math.floor(node.queue)} UNITS
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3 mb-4">
-        <div className="bg-surface-950/50 p-2 border border-white/5">
-          <div className="text-[8px] font-mono text-slate-600 uppercase mb-1 font-bold">Crew Units</div>
-          <div className="flex items-center justify-between">
-            <span className="font-mono text-xs text-slate-300">{node.staff}</span>
-            <div className="flex gap-1">
-              <button
-                onClick={() => onAction({ type: 'FIRE_STAFF', nodeId: node.id })}
-                className="p-0.5 hover:bg-white/5 rounded text-slate-500 hover:text-white transition-colors"
-              >
-                <Minus className="w-3 h-3" />
-              </button>
-              <button
-                onClick={() => onAction({ type: 'HIRE_STAFF', nodeId: node.id })}
-                disabled={funds < UPGRADE_COSTS.STAFF}
-                className="p-0.5 hover:bg-brand/20 rounded text-brand disabled:opacity-30 transition-colors"
-              >
-                <Plus className="w-3 h-3" />
-              </button>
-            </div>
-          </div>
-        </div>
-        <div className="bg-surface-950/50 p-2 border border-white/5">
-          <div className="text-[8px] font-mono text-slate-600 uppercase mb-1 font-bold">Cap Limit</div>
-          <div className="font-mono text-xs text-slate-300">{node.capacity}</div>
+          {Math.floor(node.queue)}
         </div>
       </div>
 
       {staffingHint > 0 && (
-        <div className="text-[9px] font-mono text-brand-warn uppercase mb-2 tracking-widest">
-          ↗ Emergence suggests +{staffingHint} staff
+        <div className="mt-1.5 text-[8px] font-mono text-brand-warn uppercase tracking-widest truncate">
+          +{staffingHint} staff suggested
         </div>
       )}
 
-      <button
-        onClick={() => onAction({ type: 'UPGRADE_CAPACITY', nodeId: node.id })}
-        disabled={funds < UPGRADE_COSTS.CAPACITY}
-        className="w-full py-2 bg-surface-700 hover:bg-surface-600 disabled:opacity-20 border border-white/10 text-[9px] font-bold uppercase tracking-[0.1em] text-slate-400 hover:text-white transition-all active:scale-[0.98]"
-      >
-        Expand Logic Core
-      </button>
+      <div className="mt-2 grid grid-cols-3 gap-1">
+        <button
+          onClick={() => onAction({ type: 'FIRE_STAFF', nodeId: node.id })}
+          className="min-h-8 rounded bg-surface-900/70 hover:bg-white/5 border border-white/5 text-slate-400 hover:text-white transition-colors flex items-center justify-center"
+          aria-label={`Reduce staff at ${node.name}`}
+        >
+          <Minus className="w-3 h-3" />
+        </button>
+        <button
+          onClick={() => onAction({ type: 'HIRE_STAFF', nodeId: node.id })}
+          disabled={funds < UPGRADE_COSTS.STAFF}
+          className="min-h-8 rounded bg-surface-900/70 hover:bg-brand/20 border border-white/5 text-brand disabled:opacity-30 transition-colors flex items-center justify-center"
+          aria-label={`Add staff at ${node.name}`}
+        >
+          <Plus className="w-3 h-3" />
+        </button>
+        <button
+          onClick={() => onAction({ type: 'UPGRADE_CAPACITY', nodeId: node.id })}
+          disabled={funds < UPGRADE_COSTS.CAPACITY}
+          className="min-h-8 rounded bg-surface-900/70 hover:bg-surface-700 disabled:opacity-25 border border-white/5 text-[8px] font-bold uppercase tracking-wide text-slate-400 hover:text-white transition-all"
+        >
+          Cap+
+        </button>
+      </div>
     </div>
   );
 }
@@ -506,14 +611,14 @@ function FlowPoint({
     <div className="flex flex-col items-center gap-3 relative z-10">
       <div
         className={cn(
-          'w-14 h-14 rounded-lg border-2 flex items-center justify-center bg-surface-900 transition-all duration-500 shadow-lg',
+          'w-11 h-11 sm:w-12 sm:h-12 rounded-lg border flex items-center justify-center bg-surface-900 transition-all duration-500 shadow-lg',
           isBottleneck ? 'border-red-500 text-red-500 shadow-red-500/40 animate-pulse' : colorMap[color],
         )}
       >
         {icon}
       </div>
       <div className="text-center">
-        <div className="text-[10px] font-bold text-white uppercase tracking-tight">{name}</div>
+        <div className="text-[9px] font-bold text-white uppercase tracking-tight">{name}</div>
         <div className="text-[9px] font-mono text-slate-500 font-bold tabular-nums mt-0.5">{Math.floor(count)} ACTIVE</div>
       </div>
     </div>
@@ -522,7 +627,7 @@ function FlowPoint({
 
 function FlowConnector({ active }: { active: boolean }) {
   return (
-    <div className="h-[1px] flex-1 bg-white/5 relative">
+    <div className="hidden h-[1px] min-w-8 flex-1 bg-white/5 relative">
       {active && (
         <motion.div
           initial={{ x: '-100%', opacity: 0 }}

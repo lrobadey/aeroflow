@@ -48,6 +48,10 @@ export function analyze(input: AnalysisInput): AnalysisOutput {
   const pressureByNode = lastValueByNode(recentSignals, 'pressure');
   const loadByNode = lastValueByNode(recentSignals, 'load');
   const starvationByNode = lastValueByNode(recentSignals, 'starvation');
+  const delayRiskByFlight = lastValueByNode(recentSignals, 'delayRisk');
+  const boardingPressureByFlight = lastValueByNode(recentSignals, 'boardingPressure');
+  const bankPressure = lastValueByNode(recentSignals, 'bankPressure');
+  const missedPassengers = lastValueByNode(recentSignals, 'missedPassengers');
 
   const facts: EmergenceFact[] = [];
 
@@ -65,6 +69,48 @@ export function analyze(input: AnalysisInput): AnalysisOutput {
     if (pressure > maxStress) {
       maxStress = pressure;
       if (pressure > BOTTLENECK_PRESSURE) bottleneckId = id;
+    }
+  }
+
+  for (const id of Object.keys(delayRiskByFlight)) {
+    const delayRisk = delayRiskByFlight[id] ?? 0;
+    const boardingPressure = boardingPressureByFlight[id] ?? 0;
+    totalWeightedStress += delayRisk * 0.003 + boardingPressure * 0.0015;
+    if (delayRisk > 0.55) {
+      facts.push({
+        kind: 'boardingRisk',
+        at: id,
+        severity: clamp01(delayRisk),
+        level: delayRisk > 0.8 ? 'crit' : 'warn',
+        message: `BOARDING RISK on ${id.toUpperCase()} — passenger readiness ${(delayRisk * 100).toFixed(0)}%`,
+        tick,
+      });
+    }
+  }
+
+  if ((bankPressure.flightBank ?? 0) > 0.45) {
+    facts.push({
+      kind: 'departureBank',
+      at: 'flightBank',
+      severity: clamp01(bankPressure.flightBank ?? 0),
+      level: 'warn',
+      message: `DEPARTURE BANK PRESSURE — clustered flights loading terminal demand`,
+      tick,
+    });
+  }
+
+  for (const id of Object.keys(missedPassengers)) {
+    const missed = missedPassengers[id] ?? 0;
+    if (missed > 0) {
+      totalWeightedStress += missed * 0.0004;
+      facts.push({
+        kind: 'missedPassengers',
+        at: id,
+        severity: clamp01(missed / 40),
+        level: missed > 20 ? 'crit' : 'warn',
+        message: `${id.toUpperCase()} MISSED PASSENGERS — ${missed.toFixed(0)} failed to board`,
+        tick,
+      });
     }
   }
 
