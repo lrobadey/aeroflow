@@ -1,55 +1,45 @@
 # AeroFlow
 
-AeroFlow is a browser-based airport logistics simulation. It models a terminal as a chain of nested systems: arrivals feed passenger queues, queues emit operational signals, and an emergence layer turns those signals into bottleneck facts, staffing hints, and inflow throttling.
+A small-airport simulation. The current target is BTV (Burlington, VT) — seven gates, single concourse, business commuter and ski-leisure mix.
 
-The goal is not to draw a static dashboard. The app is a live feedback system where small operator decisions affect queue pressure, passenger satisfaction, revenue, and system stability over time.
+v0 is **pure observation**: you watch a sim day unfold from 5am to midnight. Named passengers move through zones (check-in, security, concourse, gate seating, jetway). You can pause, speed up, click a passenger to read their story. At day end, a recap surfaces the day's moments.
 
-## What the app simulates
+There are no operator controls in v0. The goal is to prove the simulation looks and feels believable before any gameplay is layered on.
 
-- Passenger flow through check-in, security, lounge, and boarding stages.
-- Queue capacity, staffing, processing rate, and passenger pressure at each stage.
-- System-wide satisfaction and revenue as passengers move through the terminal.
-- Emergent bottlenecks, cascade warnings, starvation signals, and inflow throttling.
-- Operator actions such as hiring staff, reducing staff, and expanding capacity.
+## Design
 
-## System shape
+- **Real airport.** BTV's actual carrier mix (B6, DL, UA, AA) and routes drive a procedural schedule generator. Each sim day is novel but plausible.
+- **Zone-based.** Passengers transition between named zones with realistic dwell times. No walking, no pathfinding.
+- **Rich human stories.** A small named cast of regulars with persistent biographies and recurring travel patterns, plus procedural one-shots that fill the airport.
+- **Portable sim core.** The `aeroflow/sim/` package has no pygame imports. The renderer is a thin layer. If we ever move to a real game engine, the sim ports unchanged.
 
-```text
-arrivals
-  -> check-in
-  -> security
-  -> lounge
-  -> boarding
-  -> exit / revenue
+## Layout
+
+```
+aeroflow/
+  sim/      # pure Python simulation (no rendering imports)
+  render/   # pygame layer
+  data/     # BTV layout, carrier routes, regulars cast, name pool
+tests/      # pytest for sim core
+legacy/     # original TypeScript prototype (reference only)
 ```
 
-The simulation is split into a few clear layers:
-
-- `src/App.tsx` renders the cockpit and sends operator actions into the sim.
-- `src/sim/world.ts` creates the starting world, system nodes, and flow graph.
-- `src/sim/engine.ts` advances the world one tick at a time.
-- `src/sim/systems/` contains individual system behaviors, such as arrivals and queue stages.
-- `src/sim/emergence.ts` reads recent signals and produces higher-level operational facts.
-- `src/constants.ts` holds the initial tuning values and upgrade costs.
-
-## Run locally
-
-Prerequisite: Node.js.
+## Run
 
 ```bash
-npm install
-npm run dev
+pip install -e .
+python -m aeroflow
 ```
 
-The dev server runs on port `3000` by default.
-
-## Validate
+## Test
 
 ```bash
-npm run lint
-npm run build
+pytest
 ```
 
-## Notes
+## Controls
 
-This app currently runs fully in the browser. It does not require an API key or backend service.
+- `space` — pause / resume
+- `1` / `2` / `3` — 1× / 10× / 60× speed
+- click a passenger dot — open story panel
+- click outside — close story panel
