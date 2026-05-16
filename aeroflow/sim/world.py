@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import random
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
@@ -11,6 +10,7 @@ from .flight import Flight, FlightStatus
 from .passenger import Mood, Passenger, PassengerState, RegularDefinition
 from .schedule import generate_day_schedule, CarrierRoute
 from .population import generate_passengers_for_flight
+from .seeding import stable_u32
 from .zone import Zone, ZoneType
 
 
@@ -50,14 +50,14 @@ class World:
     def begin_day(self) -> None:
         """Generate today's flight schedule + passengers, queue them up."""
         d = self.clock.current_time.date()
-        rng_seed = (self.seed * 1000003) ^ d.toordinal()
+        rng_seed = stable_u32(self.seed, d.isoformat())
         self.flights = generate_day_schedule(self.routes, self.gates, d, seed=rng_seed)
         self.flights_by_id = {f.id: f for f in self.flights}
 
         all_pax: list[Passenger] = []
         for f in self.flights:
             pax_list = generate_passengers_for_flight(
-                f, self.regulars, self.name_pool, seed=rng_seed ^ hash(f.id) & 0xFFFFFFFF
+                f, self.regulars, self.name_pool, seed=stable_u32(rng_seed, f.id)
             )
             all_pax.extend(pax_list)
 
