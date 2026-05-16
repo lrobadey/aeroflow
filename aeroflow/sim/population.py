@@ -16,6 +16,7 @@ from .passenger import (
     RegularDefinition,
     TravelerType,
 )
+from .seeding import stable_u32
 
 
 # Per-route weights for traveler type. Falls back to a default if route missing.
@@ -175,7 +176,7 @@ def generate_passengers_for_flight(
     name_pool,  # NamePool — duck-typed
     seed: int | None = None,
 ) -> list[Passenger]:
-    rng = random.Random(seed if seed is not None else hash(flight.id) & 0xFFFFFFFF)
+    rng = random.Random(seed if seed is not None else stable_u32(flight.id))
     weekday = flight.scheduled_departure.weekday()
 
     passengers: list[Passenger] = []
