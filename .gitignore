@@ -1,8 +1,33 @@
-node_modules/
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
 build/
 dist/
-coverage/
+.venv/
+venv/
+
+# Tests / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
 .DS_Store
+
+# Logs / env
 *.log
 .env*
 !.env.example
+
+# Legacy (TypeScript) artifacts
+legacy/node_modules/
+legacy/build/
+legacy/dist/
+legacy/coverage/
