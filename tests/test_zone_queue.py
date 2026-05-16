@@ -95,6 +95,47 @@ def test_remove_pulls_from_in_service():
     assert p.id not in z.in_service
 
 
+def _jetway_zone() -> Zone:
+    return Zone(
+        id="JW1",
+        type=ZoneType.JETWAY,
+        label="Jetway 1",
+        rect=ZoneRect(0, 0, 100, 100),
+        service_rate_per_min=30.0,
+        service_seconds_min=20.0,
+    )
+
+
+def test_jetway_completed_passenger_absent_from_occupants():
+    """Passenger who finishes jetway dwell is in completed, not occupants()."""
+    z = _jetway_zone()
+    p = _make_pax(1)
+    now = datetime(2026, 1, 12, 6, 0)
+    z.enqueue(p, now)
+    z.tick(now, 1.0)  # pull into in_service
+    assert len(z.in_service) == 1
+
+    z.tick(now + timedelta(seconds=25), 25.0)  # dwell ≥ 20s → completes
+    assert len(z.completed) == 1
+    assert list(z.occupants()) == []  # bug: occupants() misses completed passengers
+
+
+def test_jetway_completed_passenger_removed_by_remove():
+    """Zone.remove() can extract a passenger sitting in completed."""
+    z = _jetway_zone()
+    p = _make_pax(1)
+    now = datetime(2026, 1, 12, 6, 0)
+    z.enqueue(p, now)
+    z.tick(now, 1.0)
+    z.tick(now + timedelta(seconds=25), 25.0)
+    assert p in z.completed
+
+    result = z.remove(p)
+
+    assert result is True
+    assert p not in z.completed
+
+
 def test_carrier_filter_on_check_in():
     z = Zone(
         id="CHK", type=ZoneType.CHECK_IN, label="DL Check-in",

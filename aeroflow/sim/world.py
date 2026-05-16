@@ -231,7 +231,10 @@ class World:
             # but anyone with the right flight_id "made it on" at compression time.
             served = 0
             for zone in list(self.zones.values()):
-                pax_for_flight = [p for p in zone.occupants() if p.assigned_flight_id == f.id]
+                pax_for_flight = [
+                    p for p in list(zone.occupants()) + zone.completed
+                    if p.assigned_flight_id == f.id
+                ]
                 for p in pax_for_flight:
                     zone.remove(p)
                     p.state = PassengerState.DEPARTED
