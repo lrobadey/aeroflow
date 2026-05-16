@@ -123,6 +123,11 @@ class Zone:
             self.queue.remove(passenger)
             return True
         except ValueError:
+            pass
+        try:
+            self.completed.remove(passenger)
+            return True
+        except ValueError:
             return False
 
     def occupants(self) -> Iterable[Passenger]:
